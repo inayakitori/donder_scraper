@@ -1,3 +1,4 @@
+import json
 import os
 
 from selenium import webdriver
@@ -5,27 +6,50 @@ from selenium.common import ElementNotInteractableException, NoSuchElementExcept
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 
+from site_scraper import *
+
 driver = webdriver.Firefox()
-driver.get('https://donderhiroba.jp/login.php')
-
-# login button
-go_to_login_button = driver.find_element(by=By.CSS_SELECTOR, value="div.image_base:nth-child(2) > img:nth-child(1)")
-go_to_login_button.click()
-
-# user and pass. keeps on trying to click until it can
 errors = [NoSuchElementException, ElementNotInteractableException, ElementClickInterceptedException]
 wait = WebDriverWait(driver, timeout=10, poll_frequency=0.2, ignored_exceptions=errors)
 
-mail_input = driver.find_element(by=By.CSS_SELECTOR, value="#mail")
-wait.until(lambda _: mail_input.click() or True)
-mail_input.send_keys(os.environ['DONDER_MAIL'])
+log_in(driver, wait)
 
-pass_input = driver.find_element(by=By.CSS_SELECTOR, value="#pass")
-wait.until(lambda _: pass_input.click() or True)
-pass_input.send_keys(os.environ['DONDER_PASS'])
+# todo: actually use the db
 
-# donder account page
-account_login = driver.find_element(by=By.CSS_SELECTOR, value="#btn-idpw-login")
-wait.until(lambda _: account_login.click() or True)
+user_ids = [
+     90023356630,
+    191933474995,
+    227313008892,
+    240962837781,
+    268172844251,
+    326921781427,
+    389352301003,
+    413797428087,
+    430222689046,
+    469030163443,
+    486534354187,
+    495549340545,
+    527613099274,
+    594288502311,
+    608721728595,
+    640708845617,
+    650898881996,
+    679895090257,
+    719561057294,
+    721833239786,
+    867253230159,
+]
 
-wait.until(lambda _: driver.find_element(by=By.CSS_SELECTOR, value=".buttonCenterLink > a:nth-child(1)").click() or True)
+user_ids = set(user_ids)
+
+get_users(driver, wait, user_ids)
+users = load_users()  # <-- generates user data
+
+get_songs(driver, wait, range(1, 1300))
+songs = load_songs()  # <-- generates song data
+
+get_scores(driver, wait, users, songs)
+
+
+driver.close()
+exit()
