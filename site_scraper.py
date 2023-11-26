@@ -5,6 +5,7 @@ from sqlite3 import Cursor, Connection
 from time import sleep
 from typing import List
 
+import selenium.webdriver.firefox.options
 from selenium.webdriver.remote.webelement import WebElement
 from selenium import webdriver
 from selenium.common import ElementNotInteractableException, NoSuchElementException, ElementClickInterceptedException
@@ -14,11 +15,12 @@ from selenium.webdriver.support.wait import WebDriverWait
 import threading
 
 USERS_IDS = [
-     13400555573,
-     46359019554,
-     65847441251,
-     90023356630,
-     94227648687,
+    13400555573,
+    14678744058,
+    46359019554,
+    65847441251,
+    90023356630,
+    94227648687,
     102383147279,
     131649595564,
     149585248793,
@@ -60,7 +62,7 @@ USERS_IDS = [
     966813482456,
     973913393844,
     981231646714,
-    991782996877
+    991782996877,
 ]
 
 LEVELS = {
@@ -100,38 +102,27 @@ def update_db(conn: Connection):
                                     """)
 
     # get or generate users
-    users = cursor.execute("SELECT user_id, user_name FROM users;").fetchall()  # get_users(conn, driver, wait)
+    users = cursor.execute("SELECT user_id, user_name FROM users;").fetchall()
 
     # get or generate songs
     songs = cursor.execute("SELECT * FROM songs;").fetchall()
 
     # get or generate scores
-
     user_threads = []
 
-    user_chunks = divide_chunks(users, 3)
+    top_plays = []
+    for users_for_thread in divide_chunks(users, 5):
+        thread = threading.Thread(target=get_user_top_plays, args=(top_plays, users_for_thread))
+        user_threads.append(thread)
+        thread.start()
 
-    for user_chunk in user_chunks:
-        top_plays = []
-        for (user_id, user_name) in user_chunk:
-            thread = threading.Thread(target=get_user_top_plays, args=(top_plays, user_id))
-            user_threads.append(thread)
-            thread.start()
+    for thread in user_threads:
+        thread.join()
 
-        for thread in user_threads:
-            thread.join()
-
-        print(top_plays)
-
-        for (user_id, song_id, level_id, score) in top_plays:
-            cursor.execute("INSERT or REPLACE INTO top_plays (user_id, song_id, level_id, score) VALUES(" +
-                           str(user_id) + "," +
-                           str(song_id) + "," +
-                           str(level_id) + "," +
-                           str(score) +
-                           ");")
+    for top_play in top_plays:
+        cursor.execute("INSERT or REPLACE INTO top_plays (user_id, song_id, level_id, score) VALUES(?,?,?,?);",
+                       top_play)
         conn.commit()
-
 
 
 def setup_donder():
@@ -162,68 +153,81 @@ def setup_donder():
     return driver, wait
 
 
-def get_user_top_plays(top_plays, user_id):
+def get_user_top_plays(top_plays, user_ids):
     driver, wait = setup_donder()
 
-    played_maps = set()
-    for genre in range(1, 9):
-        driver.get("https://donderhiroba.jp/score_list.php?genre=" + str(genre) + "&taiko_no=" + str(user_id))
-        buttons: List[WebElement] = driver.find_elements(By.TAG_NAME, "a")
-        for button in buttons:
-            link = button.get_attribute("href")
-            if link is not None and "score_detail.php?" in link:
+    print("handling users {}".format(user_ids))
+    for (user_id, user_name) in user_ids:
+        played_maps = set()
+        for genre in range(1, 9):
+            driver.get(create_link("score_list", taiko_no=user_id, genre=genre))
+            buttons: List[WebElement] = driver.find_elements(By.TAG_NAME, "a")
+            for button in buttons:
+                link = button.get_attribute("href")
+                if link is None or "score_detail.php?" not in link: continue
+
                 button_img = button.find_element(By.CSS_SELECTOR, "img")
-                if "none" not in button_img.get_attribute("src"):
-                    # this map has been played, now add to list
-                    map_attributes = extract_link_attributes(link)
-                    map_id = (int(map_attributes["song_no"]), int(map_attributes["level"]))
-                    played_maps.add(map_id)
-    for (song_id, level_id) in played_maps:
-        score = get_score(driver, wait, user_id, song_id, level_id)
-        if score > 0:
-            top_plays.append(
-                (user_id, song_id, level_id, score)
-            )
-            print(str(user_id) + " on " + str(song_id) + " (" + LEVELS[level_id] + ") got " + str(score))
+                # this map has been played, now add to list
+                if "none" in button_img.get_attribute("src"):continue
+
+                map_attributes = extract_link_attributes(link)
+                map_id = (int(map_attributes["song_no"]), int(map_attributes["level"]))
+                played_maps.add(map_id)
+        for (song_id, level_id) in played_maps:
+            score = get_score(driver, wait, user_id, song_id, level_id)
+            if score > 0:
+                top_plays.append(
+                    (user_id, song_id, level_id, score)
+                )
     driver.close()
 
 
-def get_songs(conn: Connection, driver, wait):
+def get_songs(conn: Connection):
     cursor = conn.cursor()
 
+    driver, wait = setup_donder()
+    driver.get(create_link("score_list"))
+
+    self_id = os.environ["DONDER_ID"]
     print("no song db, generating")
-    for song_id in range(1, 1300):
-        driver.get("https://donderhiroba.jp/score_detail.php?song_no=" + str(song_id) + "&level=3")
-        try:
-            song_name = driver.find_element(by=By.CSS_SELECTOR, value=".songNameTitleScore")
-            wait.until(lambda _: song_name.is_displayed() or True)
-            cursor.execute("INSERT or REPLACE INTO songs (song_id, song_name) VALUES(" + str(song_id) + ",'" + song_name.text + "');")
-        except Exception as e:
-            print(e)
-            pass
+    for genre in range(1, 9):
+        driver.get(create_link("score_list", taiko_no=self_id, genre=genre))
+        song_boxes: List[WebElement] = driver.find_elements(By.XPATH, "/html/body/div/div/div[1]/div[3]/ul[2]/div/li")
+        for song_box in song_boxes:
+            link_button = song_box.find_element(By.TAG_NAME, "a")
+            link = link_button.get_attribute("href")
+            map_attributes = extract_link_attributes(link)
+
+            song_name = song_box.text
+            song_id = map_attributes["song_no"]
+
+            cursor.execute("INSERT or REPLACE INTO songs (song_id, song_name) VALUES(?,?);", (song_id, song_name))
+
+    driver.close()
     conn.commit()
     return cursor.execute("SELECT * FROM songs;").fetchall()
 
 
-def get_users(conn: Connection, driver, wait):
-
+def get_users(conn: Connection):
     cursor = conn.cursor()
+    driver, wait = setup_donder()
 
     for user_no in USERS_IDS:
-        driver.get("https://donderhiroba.jp/user_profile.php?taiko_no=" + str(user_no))
+        driver.get(create_link("user_profile", taiko_no=user_no))
         try:
             user_name = driver.find_element(by=By.CSS_SELECTOR, value="#mydon_area > div:nth-child(3)")
             wait.until(lambda _: user_name.is_displayed() or True)
-            cursor.execute("INSERT or REPLACE INTO users (user_id, user_name) VALUES(" + str(user_no) + ",'" + user_name.text + "');")
+            cursor.execute("INSERT or REPLACE INTO users (user_id, user_name) VALUES(?,?);", (user_no, user_name.text))
         except Exception as e:
             print(e)
             pass
+    driver.close()
     conn.commit()
     return cursor.execute("SELECT user_id, user_name FROM users;").fetchall()
 
 
 def get_score(driver, wait, user_id, song_id, level_id):
-    driver.get("https://donderhiroba.jp/score_detail.php?song_no=" + str(song_id) + "&level=" + str(level_id) + "&taiko_no=" + str(user_id))
+    driver.get(create_link(page="score_detail", taiko_no=user_id, song_no=song_id, level=level_id))
     score_box = driver.find_element(by=By.CSS_SELECTOR, value=".high_score")
     wait.until(lambda _: score_box.is_displayed() or True)
     score_text = score_box.text[:-1]
@@ -239,6 +243,23 @@ def extract_link_attributes(link):
         value = sections[1]
         attributes[key] = value
     return attributes
+
+
+def create_link(page, taiko_no=None, song_no=None, level=None, genre=None):
+    link = "https://donderhiroba.jp/" + page + ".php?"
+    attributes = {
+        "taiko_no": None if taiko_no is None else str(taiko_no).zfill(12),
+        "song_no":  None if song_no  is None else str(song_no),
+        "level":    None if level    is None else str(level),
+        "genre":    None if genre    is None else str(genre),
+    }
+
+    for attribute in attributes:
+        if attributes[attribute] is None: continue
+        link += attribute + "=" + attributes[attribute] + "&"
+
+    return link[:-1]
+
 
 def divide_chunks(l, n):
     # looping till length l

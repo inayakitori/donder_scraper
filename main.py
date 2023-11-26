@@ -12,7 +12,7 @@ cursor = conn.cursor()
 
 # fill values
 
-# update_db(conn)
+update_db(conn)
 
 # generate elos
 
