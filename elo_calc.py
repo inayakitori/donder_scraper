@@ -20,7 +20,7 @@ def generate_elos(conn):
 
     songs = cursor.execute("SELECT * FROM songs;").fetchall()
 
-    for level_id in range(1, 4):
+    for level_id in range(1, 5):
         for tourney_index in range(1, 10):  # number of tournaments. elos update at the end
             max_delta = 0
             average_delta = 0
@@ -36,20 +36,10 @@ def generate_elos(conn):
 
             # get predicted and actual win probabilities
             for (song_id, song_name) in songs:
-                top_plays: list = cursor.execute("SELECT * FROM top_plays WHERE song_id=" + str(song_id) + " and level_id=" + str(level_id) + ";").fetchall()
-                # plays below 2 won't be included anyways. below 4 are too unpredictable
-                top_plays.sort(key=lambda play: play[3])
-
-                # get the expected win probability based on elo and position
-                for (i, user) in enumerate(top_plays):
-                    win_probability_elo = 0.0
-                    for opponent in top_plays:
-                        if user == opponent: continue
-                        win_probability_elo += 1.0 / (1 + pow(10, (user_elos[opponent[0]][level_id] - user_elos[user[0]][level_id]) / 400.0))
-                    win_probability_elo = win_probability_elo / float(len(top_plays))
-                    user_scores_elo[user[0]].append(win_probability_elo)
-                    win_probability_position = i / float(len(top_plays))
-                    user_scores_position[user[0]].append(win_probability_position)
+                get_changes_for_song(cursor, level_id, song_id, user_elos, user_scores_elo, user_scores_position)
+                # also include ura oni. if song doesn't exist there will be no plays for it
+                if level_id == 4:
+                    get_changes_for_song(cursor, level_id, song_id, user_elos, user_scores_elo, user_scores_position, is_ura=True)
 
             # now update elo based on discrepancy
             for user_id in user_elos:
@@ -64,17 +54,36 @@ def generate_elos(conn):
                                + str(int(user_elos[user_id][level_id])) + " WHERE user_id = " + str(user_id) + ";")
                 average_delta /= len(user_elos)
 
-    for (user_id, user_name) in users:
-        elo = user_elos[user_id][3]
-        print(user_name + ": " + str(elo))
+
+    # for (user_id, user_name) in users:
+    #     elo = user_elos[user_id][3]
+    #     print(user_name + ": " + str(elo))
 
     conn.commit()
+
+
+def get_changes_for_song(cursor, level_id, song_id, user_elos, user_scores_elo, user_scores_position, is_ura=False):
+    top_plays: list = cursor.execute(
+        "SELECT * FROM top_plays WHERE song_id=" + str(song_id) + " and level_id=" + str(level_id + int(is_ura)) + ";").fetchall()
+    # plays below 2 won't be included anyways. below 4 are too unpredictable
+    top_plays.sort(key=lambda play: play[3])
+    # get the expected win probability based on elo and position
+    for (i, user) in enumerate(top_plays):
+        win_probability_elo = 0.0
+        for opponent in top_plays:
+            if user == opponent: continue
+            win_probability_elo += 1.0 / (
+                        1 + pow(10, (user_elos[opponent[0]][level_id] - user_elos[user[0]][level_id]) / 400.0))
+        win_probability_elo = win_probability_elo / float(len(top_plays))
+        user_scores_elo[user[0]].append(win_probability_elo)
+        win_probability_position = i / float(len(top_plays))
+        user_scores_position[user[0]].append(win_probability_position)
 
 
 def calculate_performance(scores: list[float]):
     scores.sort(key=lambda x: -x)  # sort largest to smallest
     final_score = 0
     for (i, score) in enumerate(scores):
-        weighting = 1  # pow(0.95, i)
+        weighting = pow(0.95, i)
         final_score += score * weighting
     return final_score
