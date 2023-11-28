@@ -1,5 +1,6 @@
 from sqlite3 import Connection
 
+import numpy
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 
@@ -21,6 +22,20 @@ def get_difficulty_distribution(conn: Connection, song_id, level) -> [(int, int)
     return elo_plays
 
 
+# noinspection PyTupleAssignmentBalance
+def get_song_stats(conn: Connection, song_id, level):
+    elos, scores = zip(*get_difficulty_distribution(conn, song_id, level))
+    coeffs = numpy.polyfit(elos, scores, deg=1, full=False)
+    (_,residuals,_,_,_) = numpy.polyfit(elos, scores, deg=1, full=True)
+    diffs_squared = residuals[0]
+    mean_score = numpy.mean(scores)
+    scores_squared = sum(map(lambda score: (score - mean_score) ** 2, scores))
+    r_squared = 1.0 - (diffs_squared / scores_squared)
+    diff_slope = coeffs[0]
+    miyabi_elo = (1000000 - coeffs[1]) / diff_slope
+    return diff_slope, miyabi_elo, r_squared
+
+
 def plot_elo_vs_scores(conn: Connection, map_info: list[(int, int, str, str)]):
     cursor = conn.cursor()
 
@@ -37,6 +52,8 @@ def plot_elo_vs_scores(conn: Connection, map_info: list[(int, int, str, str)]):
         label += " (" + str(level) + ")"
 
         elos, scores = zip(*get_difficulty_distribution(conn, song_id, level))
+        diff_slope, miyabi_elo, certainty = get_song_stats(conn, song_id, level)
+        print("{:<25}: {} score/ELO, {} ELO, R^2 = {:.2f}".format(label, str(int(diff_slope)).zfill(4), int(miyabi_elo), certainty))
         ax.scatter(elos, scores, label=label, c=color, alpha=0.5)
 
     ax.set_xlabel("ELO")

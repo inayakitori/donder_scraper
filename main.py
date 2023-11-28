@@ -20,13 +20,16 @@ cursor = conn.cursor()
 
 # generate elos
 
-# generate_elos(conn)
+generate_elos(conn)
 
 # clean up
 
 plot_elo_vs_scores(conn, [
-    (285, 5, 'senbon', None),
-    (695, 4, 'haikei', None),
+    (1103, 4, 'Godish', None),
+    (695,  4, 'haikei doppelganger', None),
+    (816,  4, 'hoshikuzu', None),
+    (1149,  4, 'Phony', None),
+    (463,  4, 'yuugen no ran', None),
 ])
 
 if conn:
