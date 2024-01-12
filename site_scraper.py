@@ -14,56 +14,8 @@ from selenium.webdriver.support.wait import WebDriverWait
 
 import threading
 
-USERS_IDS = [
-    13400555573,
-    14678744058,
-    46359019554,
-    65847441251,
-    90023356630,
-    94227648687,
-    102383147279,
-    131649595564,
-    149585248793,
-    191933474995,
-    195478548305,
-    208321119402,
-    227313008892,
-    240962837781,
-    268172844251,
-    308020838473,
-    314829087457,
-    326921781427,
-    363214271477,
-    389352301003,
-    413797428087,
-    428490279701,
-    430222689046,
-    440673037432,
-    468289098677,
-    469030163443,
-    486534354187,
-    495549340545,
-    527613099274,
-    545922793247,
-    594288502311,
-    608721728595,
-    640708845617,
-    650898881996,
-    679895090257,
-    709503819958,
-    719561057294,
-    721833239786,
-    735744555857,
-    816267046818,
-    821656887106,
-    867253230159,
-    921425336631,
-    948993286979,
-    966813482456,
-    973913393844,
-    981231646714,
-    991782996877,
-]
+from aidon import get_aidon_user_ids
+from translator import jap_to_eng_conversion, is_english_name
 
 LEVELS = {
     1: "easy",
@@ -78,41 +30,21 @@ def update_db(conn: Connection):
 
     cursor = conn.cursor()
 
-    # initialise tables if not present
-    cursor.execute("""CREATE TABLE IF NOT EXISTS users (
-                                        user_id int PRIMARY KEY,
-                                        user_name text NOT NULL,
-                                        elo float
-                                    );
-                                    """)
 
-    cursor.execute("""CREATE TABLE IF NOT EXISTS songs (
-                                        song_id int PRIMARY KEY,
-                                        song_name text NOT NULL
-                                    );
-                                    """)
+    # get or generate songs
+    # songs = cursor.execute("SELECT * FROM songs;").fetchall()
 
-    cursor.execute("""CREATE TABLE IF NOT EXISTS top_plays (
-                                        user_id int NOT NULL,
-                                        song_id int NOT NULL,
-                                        level_id int NOT NULL,
-                                        score int NOT NULL,
-                                        PRIMARY KEY ( user_id, song_id, level_id)
-                                    );
-                                    """)
+    # get user ids
+    user_ids = get_aidon_user_ids()
 
     # get or generate users
     users = cursor.execute("SELECT user_id, user_name FROM users;").fetchall()
-
-    # get or generate songs
-    songs = cursor.execute("SELECT * FROM songs;").fetchall()
-
     # get or generate scores
     user_threads = []
 
     top_plays = []
-    for users_for_thread in divide_chunks(users, 5):
-        thread = threading.Thread(target=get_user_top_plays, args=(top_plays, users_for_thread))
+    for thread_index, users_for_thread in enumerate(divide_chunks(users, 10)):
+        thread = threading.Thread(target=get_user_top_plays, args=(thread_index, top_plays, users_for_thread))
         user_threads.append(thread)
         thread.start()
 
@@ -128,7 +60,7 @@ def update_db(conn: Connection):
 def setup_donder():
     driver = webdriver.Firefox()
     errors = [NoSuchElementException, ElementNotInteractableException, ElementClickInterceptedException]
-    wait = WebDriverWait(driver, timeout=30, poll_frequency=0.2, ignored_exceptions=errors)
+    wait = WebDriverWait(driver, timeout=60, poll_frequency=0.2, ignored_exceptions=errors)
     driver.get('https://donderhiroba.jp/login.php')
 
     # login button
@@ -153,11 +85,13 @@ def setup_donder():
     return driver, wait
 
 
-def get_user_top_plays(top_plays, user_ids):
+def get_user_top_plays(thread_index, top_plays, user_ids):
     driver, wait = setup_donder()
-
-    print("handling users {}".format(user_ids))
+    completed = 0
+    print(f"#{thread_index} handling users {user_ids}")
     for (user_id, user_name) in user_ids:
+        completed += 1
+        print(f"#{thread_index} handling user {user_name} ({completed}/{len(user_ids)})")
         played_maps = set()
         for genre in range(1, 9):
             driver.get(create_link("score_list", taiko_no=user_id, genre=genre))
@@ -168,7 +102,7 @@ def get_user_top_plays(top_plays, user_ids):
 
                 button_img = button.find_element(By.CSS_SELECTOR, "img")
                 # this map has been played, now add to list
-                if "none" in button_img.get_attribute("src"):continue
+                if "none" in button_img.get_attribute("src"): continue
 
                 map_attributes = extract_link_attributes(link)
                 map_id = (int(map_attributes["song_no"]), int(map_attributes["level"]))
@@ -188,31 +122,49 @@ def get_songs(conn: Connection):
     driver, wait = setup_donder()
     driver.get(create_link("score_list"))
 
-    self_id = os.environ["DONDER_ID"]
     print("no song db, generating")
+
+    jap_to_eng_names = jap_to_eng_conversion()
+
     for genre in range(1, 9):
-        driver.get(create_link("score_list", taiko_no=self_id, genre=genre))
-        song_boxes: List[WebElement] = driver.find_elements(By.XPATH, "/html/body/div/div/div[1]/div[3]/ul[2]/div/li")
+        driver.get(create_link("score_list", genre=genre))
+        song_boxes: List[WebElement] = driver.find_elements(By.XPATH, "/html/body/div/div/div[1]/div[2]/ul[2]/div/li")
+        # print(f"genre {genre}: {song_boxes}")
         for song_box in song_boxes:
             link_button = song_box.find_element(By.TAG_NAME, "a")
             link = link_button.get_attribute("href")
             map_attributes = extract_link_attributes(link)
 
-            song_name = song_box.text
-            song_id = map_attributes["song_no"]
+            song_name_jap = song_box.text
+            song_name_eng = ""
+            try:
+                # Try to get jap song name from dictionary
+                song_name_eng = jap_to_eng_names[song_name_jap]
+            except KeyError as e:
+                # if it can't be found and the japanese name is in english use that instead
+                if is_english_name(song_name_jap):
+                    song_name_eng = song_name_jap
+                    print(f"song {e} 's eng_name does not exist but was converted")
+                else:
+                    print(f"song {e} 's eng_name does not exist. left empty")
 
-            cursor.execute("INSERT or REPLACE INTO songs (song_id, song_name) VALUES(?,?);", (song_id, song_name))
+            song_id = map_attributes["song_no"]
+            # print(f"adding {song_id}, {song_name_jap}")
+            cursor.execute(
+                "INSERT or REPLACE INTO songs (song_id, song_name_jap, song_name_eng) VALUES(?,?,?);",
+                (song_id, song_name_jap, song_name_eng)
+            )
 
     driver.close()
     conn.commit()
     return cursor.execute("SELECT * FROM songs;").fetchall()
 
 
-def get_users(conn: Connection):
+def get_users(conn: Connection, user_ids: list[int]):
     cursor = conn.cursor()
     driver, wait = setup_donder()
 
-    for user_no in USERS_IDS:
+    for user_no in user_ids:
         driver.get(create_link("user_profile", taiko_no=user_no))
         try:
             user_name = driver.find_element(by=By.CSS_SELECTOR, value="#mydon_area > div:nth-child(3)")
@@ -224,7 +176,6 @@ def get_users(conn: Connection):
     driver.close()
     conn.commit()
     return cursor.execute("SELECT user_id, user_name FROM users;").fetchall()
-
 
 def get_score(driver, wait, user_id, song_id, level_id):
     driver.get(create_link(page="score_detail", taiko_no=user_id, song_no=song_id, level=level_id))
