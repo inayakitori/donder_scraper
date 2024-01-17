@@ -5,7 +5,6 @@ from sqlite3 import Cursor, Connection
 from time import sleep
 from typing import List
 
-import selenium.webdriver.firefox.options
 from selenium.webdriver.remote.webelement import WebElement
 from selenium import webdriver
 from selenium.common import ElementNotInteractableException, NoSuchElementException, ElementClickInterceptedException
@@ -27,23 +26,26 @@ LEVELS = {
 
 
 def update_db(conn: Connection):
-
     cursor = conn.cursor()
 
+    # generate songs
+    # get_songs_and_charts(conn)
 
-    # get or generate songs
-    # songs = cursor.execute("SELECT * FROM songs;").fetchall()
-
-    # get user ids
+    # get user ids. jank but works
+    print("getting user ids")
     user_ids = get_aidon_user_ids()
+    print("obtained user ids")
+    # generate users
+    print("getting users")
+    users = get_users(conn, user_ids)
+    print("obtained users")
 
-    # get or generate users
-    users = cursor.execute("SELECT user_id, user_name FROM users;").fetchall()
-    # get or generate scores
+    # generate scores
     user_threads = []
-
     top_plays = []
-    for thread_index, users_for_thread in enumerate(divide_chunks(users, 10)):
+
+    print("gatting plays")
+    for thread_index, users_for_thread in enumerate(divide_chunks(users, 5)):
         thread = threading.Thread(target=get_user_top_plays, args=(thread_index, top_plays, users_for_thread))
         user_threads.append(thread)
         thread.start()
@@ -55,12 +57,17 @@ def update_db(conn: Connection):
         cursor.execute("INSERT or REPLACE INTO top_plays (user_id, song_id, level_id, score) VALUES(?,?,?,?);",
                        top_play)
         conn.commit()
+    print("obtained plays")
 
 
 def setup_donder():
-    driver = webdriver.Firefox()
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new")
+    options.page_load_strategy = "eager"
+    driver = webdriver.Chrome(options=options)
+    driver.set_window_rect(10, 10, 1000, 1000)
     errors = [NoSuchElementException, ElementNotInteractableException, ElementClickInterceptedException]
-    wait = WebDriverWait(driver, timeout=60, poll_frequency=0.2, ignored_exceptions=errors)
+    wait = WebDriverWait(driver, timeout=600, poll_frequency=0.2, ignored_exceptions=errors)
     driver.get('https://donderhiroba.jp/login.php')
 
     # login button
@@ -116,7 +123,7 @@ def get_user_top_plays(thread_index, top_plays, user_ids):
     driver.close()
 
 
-def get_songs(conn: Connection):
+def get_songs_and_charts(conn: Connection):
     cursor = conn.cursor()
 
     driver, wait = setup_donder()
@@ -151,9 +158,17 @@ def get_songs(conn: Connection):
             song_id = map_attributes["song_no"]
             # print(f"adding {song_id}, {song_name_jap}")
             cursor.execute(
-                "INSERT or REPLACE INTO songs (song_id, song_name_jap, song_name_eng) VALUES(?,?,?);",
-                (song_id, song_name_jap, song_name_eng)
+                "INSERT or REPLACE INTO songs (song_id, song_name_jap, song_name_eng, genre_id) VALUES(?,?,?,?);",
+                (song_id, song_name_jap, song_name_eng, genre)
             )
+            diffs_to_add = [1, 2, 3, 4]
+            if len(song_box.find_elements(By.TAG_NAME, "a")) == 1:
+                diffs_to_add = [5]
+            for diff in diffs_to_add:
+                cursor.execute(
+                    "INSERT or REPLACE INTO charts (song_id, level_id) VALUES(?,?);",
+                    (song_id, diff)
+                )
 
     driver.close()
     conn.commit()
@@ -164,18 +179,20 @@ def get_users(conn: Connection, user_ids: list[int]):
     cursor = conn.cursor()
     driver, wait = setup_donder()
 
-    for user_no in user_ids:
+    for (user_no, discord_no) in user_ids:
         driver.get(create_link("user_profile", taiko_no=user_no))
         try:
             user_name = driver.find_element(by=By.CSS_SELECTOR, value="#mydon_area > div:nth-child(3)")
             wait.until(lambda _: user_name.is_displayed() or True)
-            cursor.execute("INSERT or REPLACE INTO users (user_id, user_name) VALUES(?,?);", (user_no, user_name.text))
+            cursor.execute("INSERT or REPLACE INTO users (user_id, discord_id, user_name) VALUES(?,?,?);",
+                           (user_no, discord_no, user_name.text))
         except Exception as e:
             print(e)
             pass
     driver.close()
     conn.commit()
     return cursor.execute("SELECT user_id, user_name FROM users;").fetchall()
+
 
 def get_score(driver, wait, user_id, song_id, level_id):
     driver.get(create_link(page="score_detail", taiko_no=user_id, song_no=song_id, level=level_id))
@@ -200,9 +217,9 @@ def create_link(page, taiko_no=None, song_no=None, level=None, genre=None):
     link = "https://donderhiroba.jp/" + page + ".php?"
     attributes = {
         "taiko_no": None if taiko_no is None else str(taiko_no).zfill(12),
-        "song_no":  None if song_no  is None else str(song_no),
-        "level":    None if level    is None else str(level),
-        "genre":    None if genre    is None else str(genre),
+        "song_no": None if song_no is None else str(song_no),
+        "level": None if level is None else str(level),
+        "genre": None if genre is None else str(genre),
     }
 
     for attribute in attributes:

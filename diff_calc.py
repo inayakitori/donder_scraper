@@ -34,10 +34,14 @@ def get_song_stats(conn: Connection, song_id, level):
     diffs_squared = residuals[0]
     mean_score = numpy.mean(scores)
     scores_squared = sum(map(lambda score: (score - mean_score) ** 2, scores))
+    uncertainty_coefficient = (len(scores) - 1.) / len(scores)
     r_squared = 1.0 - (diffs_squared / scores_squared)
+    r_squared *= uncertainty_coefficient
+    modified_diffs_squared = (1.0 - r_squared) * scores_squared
     diff_slope = coeffs[0]
     miyabi_elo = (1000000 - coeffs[1]) / diff_slope
-    return diff_slope, miyabi_elo, r_squared
+    sd = (modified_diffs_squared / len(scores)) ** 0.5
+    return diff_slope, miyabi_elo, sd
 
 
 def plot_elo_vs_scores(conn: Connection, map_info: list[(int, int, str, str)]):
@@ -56,8 +60,8 @@ def plot_elo_vs_scores(conn: Connection, map_info: list[(int, int, str, str)]):
         label += " (" + str(level) + ")"
         difficult_distribution = get_difficulty_distribution(conn, song_id, level)
         elos, scores = zip(*difficult_distribution)
-        diff_slope, miyabi_elo, certainty = get_song_stats(conn, song_id, level)
-        print("{:<25}: {} score/ELO, {} ELO, R^2 = {:.2f}".format(label, str(int(diff_slope)).zfill(4), int(miyabi_elo), certainty))
+        diff_slope, miyabi_elo, sd = get_song_stats(conn, song_id, level)
+        print("{:<25}: {} score/ELO, {} ELO, sd = {:.2f}".format(label, str(int(diff_slope)).zfill(4), int(miyabi_elo), sd))
         ax.scatter(elos, scores, label=label, c=color, alpha=0.5)
 
     ax.set_xlabel("ELO")
@@ -83,6 +87,7 @@ def plot_scores_and_expected_scores(conn: Connection, user_id, level_id):
         f"SELECT elo{min(level_id, 4)} FROM users where user_id = ?",
         (user_id,)
     ).fetchone()
+
     score_actual_estimate = []
     for song_id, level_id, score in top_plays:
         estimated_score = estimate_score(conn, song_id, level_id, elo)
@@ -119,7 +124,7 @@ def estimate_score(conn: Connection, song_id, level_id, elo):
     song_stats = get_song_stats(conn, song_id, level_id)
     if song_stats is None: return None
 
-    diff_slope, miyabi_elo, certainty = song_stats
+    diff_slope, miyabi_elo, _ = song_stats
     return diff_slope * (elo - miyabi_elo) + 1000000
 
 

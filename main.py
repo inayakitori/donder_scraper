@@ -15,7 +15,6 @@ from diff_calc import *
 conn = sqlite3.connect("./res/taiko.db")
 cursor = conn.cursor()
 
-
 # initialise tables if not present
 cursor.execute("""CREATE TABLE IF NOT EXISTS users (
                                         user_id int PRIMARY KEY,
@@ -30,7 +29,8 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS users (
 cursor.execute("""CREATE TABLE IF NOT EXISTS songs (
                                         song_id int PRIMARY KEY,
                                         song_name_jap text NOT NULL,
-                                        song_name_eng text
+                                        song_name_eng text,
+                                        genre_id integer
                                     );
                                     """)
 
@@ -57,31 +57,28 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS top_plays (
 # fill values
 
 # update_db(conn)
+# plot_elo_vs_scores(conn, [(882, 5, 'otome', None)])
 
-# generate elos
-
-# generate_elos(conn)
-
-# clean up
-
-get_scoreboard_data(conn, 1216, 5)
+generate_elos(conn)
 
 # plot_scores_and_expected_scores(conn, 594288502311, 4)
-
-exit()
-
+# charts
 songs = cursor.execute("SELECT song_id, song_name_jap, song_name_eng FROM songs").fetchall()
-
 for song_id, song_name_jap, song_name_eng in songs:
     for level_id in range(1,6):
         song_results = get_song_stats(conn, song_id, level_id)
-        if song_results is None: continue
-        diff_slope, miyabi_elo, r_squared = song_results
-        print(f"{song_id}\t{level_id}\t{song_name_jap}\t{song_name_eng}\t{diff_slope}\t{miyabi_elo}\t{r_squared}")
+        if song_results is None:
+            cursor.execute(
+                "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
+                (song_id, level_id, None, None, None)
+            )
+            continue
+        diff_slope, miyabi_elo, sd = song_results
+        print(f"{song_id}\t{level_id}\t{song_name_jap}\t{song_name_eng}\t{diff_slope}\t{miyabi_elo}\t{sd}")
 
         cursor.execute(
             "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
-            (song_id, level_id, int(diff_slope), int(miyabi_elo), r_squared)
+            (song_id, level_id, int(diff_slope), int(miyabi_elo), sd)
         )
 conn.commit()
 
