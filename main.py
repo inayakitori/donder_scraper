@@ -1,16 +1,40 @@
+import getopt
 import json
 import os
 import sqlite3
+import sys
 
 from _sqlite3 import Error
 from matplotlib import pyplot as plt
 from matplotlib.axis import Axis
 from matplotlib.figure import Figure
 
+import my_globals
+import site_scraper
 from scoreboard import get_scoreboard_data
-from site_scraper import *
 from elo_calc import *
 from diff_calc import *
+
+argumentList = sys.argv[1:]
+
+# Long options
+long_options = ["aidon_url=", "donder_mail=", "donder_pass="]
+
+arguments, values = getopt.getopt(argumentList, "a:m:p:", long_options)
+
+print((arguments, values))
+for currentArgument, currentValue in arguments:
+    print(f"{currentArgument} = {currentValue}")
+    if currentArgument == "--aidon_url":
+        my_globals.aidon_url = currentValue
+
+    elif currentArgument == "--donder_mail":
+        my_globals.donder_mail = currentValue
+
+    elif currentArgument == "--donder_pass":
+        my_globals.donder_pass = currentValue
+
+sqlite3.threadsafety = 3
 
 conn = sqlite3.connect("./res/taiko.db")
 cursor = conn.cursor()
@@ -55,32 +79,32 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS top_plays (
                                     """)
 
 # fill values
+with conn:
+    site_scraper.update_db(conn)
+    # plot_elo_vs_scores(conn, [(882, 5, 'otome', None)])
 
-# update_db(conn)
-# plot_elo_vs_scores(conn, [(882, 5, 'otome', None)])
+    generate_elos(conn)
 
-generate_elos(conn)
+    # plot_scores_and_expected_scores(conn, 594288502311, 4)
+    # charts
+    songs = cursor.execute("SELECT song_id, song_name_jap, song_name_eng FROM songs").fetchall()
+    for song_id, song_name_jap, song_name_eng in songs:
+        for level_id in range(1,6):
+            song_results = get_song_stats(conn, song_id, level_id)
+            if song_results is None:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
+                    (song_id, level_id, None, None, None)
+                )
+                continue
+            diff_slope, miyabi_elo, sd = song_results
+            print(f"{song_id}\t{level_id}\t{song_name_jap}\t{song_name_eng}\t{diff_slope}\t{miyabi_elo}\t{sd}")
 
-# plot_scores_and_expected_scores(conn, 594288502311, 4)
-# charts
-songs = cursor.execute("SELECT song_id, song_name_jap, song_name_eng FROM songs").fetchall()
-for song_id, song_name_jap, song_name_eng in songs:
-    for level_id in range(1,6):
-        song_results = get_song_stats(conn, song_id, level_id)
-        if song_results is None:
             cursor.execute(
                 "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
-                (song_id, level_id, None, None, None)
+                (song_id, level_id, int(diff_slope), int(miyabi_elo), sd)
             )
-            continue
-        diff_slope, miyabi_elo, sd = song_results
-        print(f"{song_id}\t{level_id}\t{song_name_jap}\t{song_name_eng}\t{diff_slope}\t{miyabi_elo}\t{sd}")
-
-        cursor.execute(
-            "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
-            (song_id, level_id, int(diff_slope), int(miyabi_elo), sd)
-        )
-conn.commit()
+    conn.commit()
 
 if conn:
     conn.close()

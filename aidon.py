@@ -2,12 +2,14 @@ import os
 
 from paramiko import SSHClient, AutoAddPolicy
 
+import my_globals
+
 
 def get_aidon_user_ids():
 
     client = SSHClient()
     client.set_missing_host_key_policy(AutoAddPolicy())
-    client.connect(os.environ["AIDON_URL"], username='ubuntu', key_filename='./res/aidon.pem')
+    client.connect(my_globals.aidon_url, username='ubuntu', key_filename='./res/aidon.pem')
     stdin, stdout, stderr = client.exec_command(
         "cd ai_don_discord_py; sqlite3 discordUserData.db 'select donder_id, discord_id from userData'"
     )

@@ -5,6 +5,7 @@ from sqlite3 import Cursor, Connection
 from time import sleep
 from typing import List
 
+from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium import webdriver
 from selenium.common import ElementNotInteractableException, NoSuchElementException, ElementClickInterceptedException
@@ -13,6 +14,7 @@ from selenium.webdriver.support.wait import WebDriverWait
 
 import threading
 
+import my_globals
 from aidon import get_aidon_user_ids
 from translator import jap_to_eng_conversion, is_english_name
 
@@ -44,8 +46,8 @@ def update_db(conn: Connection):
     user_threads = []
     top_plays = []
 
-    print("gatting plays")
-    for thread_index, users_for_thread in enumerate(divide_chunks(users, 5)):
+    print("getting plays")
+    for thread_index, users_for_thread in enumerate(divide_chunks(users, 9)):
         thread = threading.Thread(target=get_user_top_plays, args=(thread_index, top_plays, users_for_thread))
         user_threads.append(thread)
         thread.start()
@@ -62,7 +64,6 @@ def update_db(conn: Connection):
 
 def setup_donder():
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
     options.page_load_strategy = "eager"
     driver = webdriver.Chrome(options=options)
     driver.set_window_rect(10, 10, 1000, 1000)
@@ -77,11 +78,11 @@ def setup_donder():
     # user and pass
     mail_input = driver.find_element(by=By.CSS_SELECTOR, value="#mail")
     wait.until(lambda _: mail_input.click() or True)
-    mail_input.send_keys(os.environ['DONDER_MAIL'])
+    mail_input.send_keys(my_globals.donder_mail)
 
     pass_input = driver.find_element(by=By.CSS_SELECTOR, value="#pass")
     wait.until(lambda _: pass_input.click() or True)
-    pass_input.send_keys(os.environ['DONDER_PASS'])
+    pass_input.send_keys(my_globals.donder_pass)
 
     # donder account page
     account_login = driver.find_element(by=By.CSS_SELECTOR, value="#btn-idpw-login")
@@ -93,33 +94,49 @@ def setup_donder():
 
 
 def get_user_top_plays(thread_index, top_plays, user_ids):
-    driver, wait = setup_donder()
+    driver: WebDriver
     completed = 0
     print(f"#{thread_index} handling users {user_ids}")
     for (user_id, user_name) in user_ids:
-        completed += 1
-        print(f"#{thread_index} handling user {user_name} ({completed}/{len(user_ids)})")
-        played_maps = set()
-        for genre in range(1, 9):
-            driver.get(create_link("score_list", taiko_no=user_id, genre=genre))
-            buttons: List[WebElement] = driver.find_elements(By.TAG_NAME, "a")
-            for button in buttons:
-                link = button.get_attribute("href")
-                if link is None or "score_detail.php?" not in link: continue
+        try:
+            if 'driver' not in locals():
+                driver, wait = setup_donder()
+            completed += 1
+            print(f"#{thread_index} handling user {user_name} ({completed}/{len(user_ids)})")
+            played_maps = set()
+            for genre in range(1, 9):
+                driver.get(create_link("score_list", taiko_no=user_id, genre=genre))
+                buttons: List[WebElement] = driver.find_elements(By.TAG_NAME, "a")
+                for button in buttons:
+                    link = button.get_attribute("href")
+                    if link is None or "score_detail.php?" not in link: continue
 
-                button_img = button.find_element(By.CSS_SELECTOR, "img")
-                # this map has been played, now add to list
-                if "none" in button_img.get_attribute("src"): continue
+                    button_img = button.find_element(By.CSS_SELECTOR, "img")
+                    # this map has been played, now add to list
+                    if "none" in button_img.get_attribute("src"): continue
 
-                map_attributes = extract_link_attributes(link)
-                map_id = (int(map_attributes["song_no"]), int(map_attributes["level"]))
-                played_maps.add(map_id)
-        for (song_id, level_id) in played_maps:
-            score = get_score(driver, wait, user_id, song_id, level_id)
-            if score > 0:
-                top_plays.append(
-                    (user_id, song_id, level_id, score)
-                )
+                    map_attributes = extract_link_attributes(link)
+                    map_id = (int(map_attributes["song_no"]), int(map_attributes["level"]))
+                    played_maps.add(map_id)
+            for (song_id, level_id) in played_maps:
+                attempts = 0
+                while attempts < 10:
+                    try:
+                        score = get_score(driver, wait, user_id, song_id, level_id)
+                        if score > 0:
+                            top_plays.append(
+                                (user_id, song_id, level_id, score)
+                            )
+                    except Exception as e:
+                        print(f"#{thread_index} failed to handle user{user_name}'s score {song_id} {level_id}. attempt {attempts}/10: {e}")
+                        driver.close()
+                        driver, wait = setup_donder()
+                        attempts += 1
+                    break
+        except Exception as e:
+            print(f"#{thread_index} failed to handle user{user_name}: {e}")
+            driver.close()
+            driver, wait = setup_donder()
     driver.close()
 
 

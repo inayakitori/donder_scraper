@@ -1,0 +1,3 @@
+global aidon_url
+global donder_mail
+global donder_pass
