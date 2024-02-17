@@ -24,7 +24,6 @@ arguments, values = getopt.getopt(argumentList, "a:m:p:", long_options)
 
 print((arguments, values))
 for currentArgument, currentValue in arguments:
-    print(f"{currentArgument} = {currentValue}")
     if currentArgument == "--aidon_url":
         my_globals.aidon_url = currentValue
 

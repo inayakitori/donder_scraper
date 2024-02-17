@@ -3,7 +3,7 @@ import os
 import sqlite3
 from sqlite3 import Cursor, Connection
 from time import sleep
-from typing import List
+from typing import List, Optional
 
 from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
@@ -31,7 +31,9 @@ def update_db(conn: Connection):
     cursor = conn.cursor()
 
     # generate songs
-    # get_songs_and_charts(conn)
+    print("getting songs")
+    get_songs_and_charts(conn)
+    print("obtained songs")
 
     # get user ids. jank but works
     print("getting user ids")
@@ -40,6 +42,7 @@ def update_db(conn: Connection):
     # generate users
     print("getting users")
     users = get_users(conn, user_ids)
+    print(users)
     print("obtained users")
 
     # generate scores
@@ -47,7 +50,7 @@ def update_db(conn: Connection):
     top_plays = []
 
     print("getting plays")
-    for thread_index, users_for_thread in enumerate(divide_chunks(users, 9)):
+    for thread_index, users_for_thread in enumerate(divide_chunks(users, 13)):
         thread = threading.Thread(target=get_user_top_plays, args=(thread_index, top_plays, users_for_thread))
         user_threads.append(thread)
         thread.start()
@@ -64,11 +67,12 @@ def update_db(conn: Connection):
 
 def setup_donder():
     options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new")
     options.page_load_strategy = "eager"
     driver = webdriver.Chrome(options=options)
     driver.set_window_rect(10, 10, 1000, 1000)
     errors = [NoSuchElementException, ElementNotInteractableException, ElementClickInterceptedException]
-    wait = WebDriverWait(driver, timeout=600, poll_frequency=0.2, ignored_exceptions=errors)
+    wait = WebDriverWait(driver, timeout=60, poll_frequency=0.2, ignored_exceptions=errors)
     driver.get('https://donderhiroba.jp/login.php')
 
     # login button
@@ -94,12 +98,12 @@ def setup_donder():
 
 
 def get_user_top_plays(thread_index, top_plays, user_ids):
-    driver: WebDriver
+    driver: Optional[WebDriver] = None
     completed = 0
     print(f"#{thread_index} handling users {user_ids}")
     for (user_id, user_name) in user_ids:
         try:
-            if 'driver' not in locals():
+            if driver is None:
                 driver, wait = setup_donder()
             completed += 1
             print(f"#{thread_index} handling user {user_name} ({completed}/{len(user_ids)})")
@@ -136,7 +140,7 @@ def get_user_top_plays(thread_index, top_plays, user_ids):
         except Exception as e:
             print(f"#{thread_index} failed to handle user{user_name}: {e}")
             driver.close()
-            driver, wait = setup_donder()
+            driver = None
     driver.close()
 
 
