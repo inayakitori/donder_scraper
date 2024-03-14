@@ -41,6 +41,7 @@ cursor = conn.cursor()
 # initialise tables if not present
 cursor.execute("""CREATE TABLE IF NOT EXISTS users (
                                         user_id int PRIMARY KEY,
+                                        discord_id int,
                                         user_name text NOT NULL,
                                         elo1 float,
                                         elo2 float,
@@ -63,7 +64,8 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS charts (
                                         level_id int NOT NULL,
                                         score_slope int,
                                         score_miyabi int,
-                                        certainty float,
+                                        sd_mean float,
+                                        sd_sd float,
                                         PRIMARY KEY (song_id, level_id)
                                     );
                                     """)
@@ -73,6 +75,13 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS top_plays (
                                         song_id int NOT NULL,
                                         level_id int NOT NULL,
                                         score int NOT NULL,
+                                        rank int,
+                                        crown int,
+                                        good_cnt int,
+                                        ok_cnt int,
+                                        bad_cnt int,
+                                        combo_cnt int,
+                                        roll_cnt int,
                                         PRIMARY KEY (user_id, song_id, level_id)
                                     );
                                     """)
@@ -92,16 +101,16 @@ with conn:
             song_results = get_song_stats(conn, song_id, level_id)
             if song_results is None:
                 cursor.execute(
-                    "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
-                    (song_id, level_id, None, None, None)
+                    "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, sd_mean, sd_sd) VALUES(?,?,?,?,?,?);",
+                    (song_id, level_id, None, None, None, None)
                 )
                 continue
-            diff_slope, miyabi_elo, sd = song_results
-            print(f"{song_id}\t{level_id}\t{song_name_jap}\t{song_name_eng}\t{diff_slope}\t{miyabi_elo}\t{sd}")
+            diff_slope, miyabi_elo, uncertainty_mean_sample, uncertainty_sd = song_results
+            print(f"{song_id}\t{level_id}\t{song_name_jap}\t{song_name_eng}\t{diff_slope}\t{miyabi_elo}\t{uncertainty_mean_sample}\t{uncertainty_sd}")
 
             cursor.execute(
-                "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, certainty) VALUES(?,?,?,?,?);",
-                (song_id, level_id, int(diff_slope), int(miyabi_elo), sd)
+                "INSERT OR REPLACE INTO charts (song_id, level_id, score_slope, score_miyabi, sd_mean, sd_sd) VALUES(?,?,?,?,?,?);",
+                (song_id, level_id, int(diff_slope), int(miyabi_elo), uncertainty_mean_sample, uncertainty_sd)
             )
     conn.commit()
 

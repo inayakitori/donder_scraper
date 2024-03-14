@@ -1,10 +1,14 @@
+import warnings
 from sqlite3 import Connection
 
 import numpy
+import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 
 import random
+
+from numpy import RankWarning
 
 
 def get_difficulty_distribution(conn: Connection, song_id, level) -> [(int, int)]:
@@ -24,23 +28,41 @@ def get_difficulty_distribution(conn: Connection, song_id, level) -> [(int, int)
     return elo_plays
 
 
-# noinspection PyTupleAssignmentBalance
 def get_song_stats(conn: Connection, song_id, level):
-    difficult_distribution = get_difficulty_distribution(conn, song_id, level)
+    difficult_distribution: [(int, int)] = get_difficulty_distribution(conn, song_id, level)
+    # no way to get good estimates from so few results
     if len(difficult_distribution) < 4: return None
+    # get base information on distribution
+    diff_slope, miyabi_elo, uncertainty_mean_sample =  get_distribution_stats(difficult_distribution)
+
+    score_sds = list()
+
+    for _ in range(0, 1000):
+        resampling = list()
+        for _ in range(0, len(difficult_distribution)):
+            n = random.randint(0, len(difficult_distribution)-1)
+            resampling.append(difficult_distribution[n])
+        resampling_stats = get_distribution_stats(resampling)
+        if resampling_stats is not None:
+            _,_,uncertainty = resampling_stats
+            score_sds.append(uncertainty)
+
+    uncertainty_mean_bootstrap = np.mean(score_sds)
+    uncertainty_sd = np.std(score_sds)
+    print(f"{uncertainty_mean_sample} ~ {uncertainty_mean_bootstrap}, sd = {uncertainty_sd}")
+    return diff_slope, miyabi_elo, uncertainty_mean_sample, uncertainty_sd
+
+
+# noinspection PyTupleAssignmentBalance
+def get_distribution_stats(difficult_distribution):
     elos, scores = zip(*difficult_distribution)
     coeffs = numpy.polyfit(elos, scores, deg=1, full=False)
-    (_,residuals,_,_,_) = numpy.polyfit(elos, scores, deg=1, full=True)
-    diffs_squared = residuals[0]
-    mean_score = numpy.mean(scores)
-    scores_squared = sum(map(lambda score: (score - mean_score) ** 2, scores))
-    uncertainty_coefficient = (len(scores) - 1.) / len(scores)
-    r_squared = 1.0 - (diffs_squared / scores_squared)
-    r_squared *= uncertainty_coefficient
-    modified_diffs_squared = (1.0 - r_squared) * scores_squared
+    (_, score_residuals, _, _, _) = numpy.polyfit(elos, scores, deg=1, full=True)
+    if len(score_residuals) == 0: return None
+    diffs_squared = score_residuals[0]
+    sd = (diffs_squared / len(scores)) ** 0.5
     diff_slope = coeffs[0]
     miyabi_elo = (1000000 - coeffs[1]) / diff_slope
-    sd = (modified_diffs_squared / len(scores)) ** 0.5
     return diff_slope, miyabi_elo, sd
 
 
@@ -60,7 +82,7 @@ def plot_elo_vs_scores(conn: Connection, map_info: list[(int, int, str, str)]):
         label += " (" + str(level) + ")"
         difficult_distribution = get_difficulty_distribution(conn, song_id, level)
         elos, scores = zip(*difficult_distribution)
-        diff_slope, miyabi_elo, sd = get_song_stats(conn, song_id, level)
+        diff_slope, miyabi_elo, sd, _ = get_song_stats(conn, song_id, level)
         print("{:<25}: {} score/ELO, {} ELO, sd = {:.2f}".format(label, str(int(diff_slope)).zfill(4), int(miyabi_elo), sd))
         ax.scatter(elos, scores, label=label, c=color, alpha=0.5)
 
@@ -124,7 +146,7 @@ def estimate_score(conn: Connection, song_id, level_id, elo):
     song_stats = get_song_stats(conn, song_id, level_id)
     if song_stats is None: return None
 
-    diff_slope, miyabi_elo, _ = song_stats
+    diff_slope, miyabi_elo, _, _ = song_stats
     return diff_slope * (elo - miyabi_elo) + 1000000
 
 

@@ -20,7 +20,6 @@ def generate_elos(conn):
             if level_id == 4:
                 calculate_song_pp(cursor, level_id, song_id, user_score_pps, is_ura=True)
 
-
         user_total_pps = {}
         for (user_id, user_name) in users:
             user_total_pps[user_id] = 0.
@@ -44,7 +43,6 @@ def generate_elos(conn):
             cursor.execute("UPDATE users SET elo" + str(level_id) + " = ? WHERE user_id = ?;",
                            (elo, user_id))
 
-
     # for (user_id, user_name) in users:
     #     elo = user_elos[user_id][3]
     #     print(user_name + ": " + str(elo))
@@ -66,7 +64,7 @@ def calculate_song_pp(cursor, level_id, song_id, user_song_pps, is_ura=False):
 
 
 def calculate_total_pp(scores: list[float]):
-    if len(scores) < 4:
+    if len(scores) < 3:
         return None
     scores.sort(key=lambda x: -x)  # sort largest to smallest
     final_score = 0
