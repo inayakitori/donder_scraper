@@ -41,7 +41,7 @@ cursor = conn.cursor()
 # initialise tables if not present
 cursor.execute("""CREATE TABLE IF NOT EXISTS users (
                                         user_id int PRIMARY KEY,
-                                        discord_id int,
+                                        discord_id int UNIQUE,
                                         user_name text NOT NULL,
                                         elo1 float,
                                         elo2 float,

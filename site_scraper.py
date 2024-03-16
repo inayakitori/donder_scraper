@@ -39,12 +39,15 @@ def update_db(conn: Connection):
     # get user ids. jank but works
     print("getting user ids")
     user_ids = get_aidon_user_ids()
+    print(user_ids)
     print("obtained user ids")
     # generate users
     print("getting users")
     users = get_users(conn, user_ids)
     print(users)
     print("obtained users")
+
+    exit()
 
     # generate scores
     user_threads = []
